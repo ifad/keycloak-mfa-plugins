@@ -89,16 +89,22 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 			}
 		}
 
-		int length = Integer.parseInt(config.getConfig().get("length"));
-		int ttl = Integer.parseInt(config.getConfig().get("ttl"));
-
-		String code = SmsCode.issue(context.getAuthenticationSession(), mobileNumber, length, ttl);
+		SmsCode smsCode = new SmsCode(session, config.getConfig());
+		Optional<String> code = smsCode.issue(context.getAuthenticationSession(), user, mobileNumber);
+		if (code.isEmpty()) {
+			context.challenge(context.form()
+				.setAttribute("realm", realm)
+				.setAttribute("phoneNumber", mobileNumber)
+				.setError("smsAuthResendBlocked", smsCode.blockedMinutesRemaining(user).orElse(0L))
+				.createForm(TPL_CODE));
+			return;
+		}
 
 		try {
 			Theme theme = session.theme().getTheme(Theme.Type.LOGIN);
 			Locale locale = session.getContext().resolveLocale(user);
 			String smsAuthText = theme.getEnhancedMessages(realm,locale).getProperty("smsAuthText");
-			String smsText = String.format(smsAuthText, code, Math.floorDiv(ttl, 60));
+			String smsText = String.format(smsAuthText, code.get(), Math.floorDiv(smsCode.getTtl(), 60));
 
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 

@@ -47,6 +47,13 @@ account console `/realms/realm/account/#/account-security/signing-in` by enterin
 If the option `Force 2FA` in the SMS Authenticator config is enabled and a user has no other 2FA method already enabled,
 users will have to set up the SMS Authenticator.
 
+# Code re-sends
+Reloading the code page, using the back button or a theme's "resend code" link re-sends the still-valid code instead
+of generating a new one, so it does not matter which SMS arrives first. `Time-to-live` restarts with every send.
+After `Re-send limit` re-sends of one code (default 4), further code requests are blocked for `Re-send block duration`
+seconds (default 900). The block is stored per user, so restarting the login does not lift it; a code already
+delivered stays usable until it expires.
+
 # Testing
 This module has two kinds of automated tests, both run with `mvn test` from this directory (or `mvn install` from the repo root, which is what CI does):
 

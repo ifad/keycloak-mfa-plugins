@@ -46,6 +46,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -293,6 +294,127 @@ public class SmsAuthenticatorFlowTest {
 		} finally {
 			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "300"));
 		}
+	}
+
+	@Test
+	public void resendLimitBlocksFurtherCodeRequests() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "2"));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			String code = awaitSmsCode();
+
+			for (int i = 0; i < 2; i++) {
+				reloadSmsCodePage();
+				smsCodePage.assertCurrent();
+				assertEquals(code, awaitSmsCode(), "Resend " + (i + 1) + " should still carry the first code");
+			}
+
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			assertResendBlocked();
+
+			// The code delivered before the block is still usable.
+			smsCodePage.enterCode(code);
+			smsCodePage.submit();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.LOGIN)
+				.userId(user.getId())
+				.details(Details.USERNAME, user.getUsername());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "4"));
+		}
+	}
+
+	@Test
+	public void resendBlockExpiresAfterConfiguredDuration() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "1", "resendBlockDuration", "2"));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			String code = awaitSmsCode();
+
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			assertEquals(code, awaitSmsCode());
+
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			assertResendBlocked();
+
+			Thread.sleep(3000);
+
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			assertEquals(code, awaitSmsCode(), "Expected resends to work again once the block expired");
+
+			smsCodePage.enterCode(code);
+			smsCodePage.submit();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.LOGIN)
+				.userId(user.getId())
+				.details(Details.USERNAME, user.getUsername());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "4", "resendBlockDuration", "900"));
+		}
+	}
+
+	@Test
+	public void resendBlockSurvivesLoginRestart() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "1"));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			awaitSmsCode();
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			awaitSmsCode();
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			assertResendBlocked();
+
+			// A fresh auth session (cookies gone, password entered again) is still blocked: the
+			// block is stored per user, not per auth session, so restarting the login cannot
+			// be used to keep requesting SMS.
+			driver.cookies().deleteAll();
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			assertResendBlocked();
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "4"));
+		}
+	}
+
+	private void assertResendBlocked() throws InterruptedException {
+		String error = smsCodePage.getErrorMessage().orElse("");
+		assertTrue(error.contains("Too many"), "Expected the resend-blocked error, got: '" + error + "'");
+		assertNull(smsRequestBodies.poll(2, TimeUnit.SECONDS), "Expected no SMS to be sent while blocked");
 	}
 
 	// PhoneValidationRequiredAction re-adds mobile_number_config to the auth session, so a

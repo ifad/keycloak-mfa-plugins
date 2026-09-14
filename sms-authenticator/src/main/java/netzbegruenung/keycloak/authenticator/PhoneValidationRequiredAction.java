@@ -39,6 +39,7 @@ import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.theme.Theme;
 
 import java.util.Locale;
+import java.util.Optional;
 import jakarta.ws.rs.core.Response;
 
 public class PhoneValidationRequiredAction implements RequiredActionProvider, CredentialRegistrator {
@@ -63,15 +64,20 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 			String mobileNumber = authSession.getAuthNote("mobile_number");
 			logger.infof("Validating phone number: %s of user: %s", mobileNumber, user.getUsername());
 
-			int length = Integer.parseInt(config.getConfig().get("length"));
-			int ttl = Integer.parseInt(config.getConfig().get("ttl"));
-
-			String code = SmsCode.issue(authSession, mobileNumber, length, ttl);
+			SmsCode smsCode = new SmsCode(context.getSession(), config.getConfig());
+			Optional<String> code = smsCode.issue(authSession, user, mobileNumber);
+			if (code.isEmpty()) {
+				context.challenge(context.form()
+					.setAttribute("realm", realm)
+					.setError("smsAuthResendBlocked", smsCode.blockedMinutesRemaining(user).orElse(0L))
+					.createForm(SmsAuthenticator.TPL_CODE));
+				return;
+			}
 
 			Theme theme = context.getSession().theme().getTheme(Theme.Type.LOGIN);
 			Locale locale = context.getSession().getContext().resolveLocale(user);
 			String smsAuthText = theme.getEnhancedMessages(realm,locale).getProperty("smsAuthText");
-			String smsText = String.format(smsAuthText, code, Math.floorDiv(ttl, 60));
+			String smsText = String.format(smsAuthText, code.get(), Math.floorDiv(smsCode.getTtl(), 60));
 
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 
