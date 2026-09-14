@@ -204,6 +204,38 @@ public class SmsAuthenticatorFlowTest {
 	}
 
 	@Test
+	public void missingCodeFieldIsRejectedLikeInvalidCode() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		oauth.openLoginForm();
+		loginPage.fillLogin(user.getUsername(), user.getPassword());
+		loginPage.submit();
+
+		smsCodePage.assertCurrent();
+		String code = awaitSmsCode();
+
+		// A GET on the action URL *with* session_code is routed to action() without any form
+		// data (e.g. a mis-built "resend" link); it must be handled like a wrong code, not blow
+		// up with a server error.
+		driver.open(driver.findElement(By.id("kc-sms-code-login-form")).getAttribute("action"));
+
+		smsCodePage.assertCurrent();
+		assertTrue(smsCodePage.getErrorMessage().orElse("").contains("Invalid"),
+			"Expected the invalid-code error, got: " + smsCodePage.getErrorMessage());
+		events.clear();
+
+		smsCodePage.enterCode(code);
+		smsCodePage.submit();
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.LOGIN)
+			.userId(user.getId())
+			.details(Details.USERNAME, user.getUsername());
+	}
+
+	@Test
 	public void expiredSmsCodeIsRejected() throws Exception {
 		registerPhoneNumber();
 		logout();

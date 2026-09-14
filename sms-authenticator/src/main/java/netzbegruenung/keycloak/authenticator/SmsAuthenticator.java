@@ -133,7 +133,8 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 			return;
 		}
 
-		boolean isValid = enteredCode.equals(code);
+		// null-safe: a GET on the action URL with session_code reaches action() without form data
+		boolean isValid = code.equals(enteredCode);
 		if (isValid) {
 			if (Long.parseLong(ttl) < System.currentTimeMillis()) {
 				// expired
