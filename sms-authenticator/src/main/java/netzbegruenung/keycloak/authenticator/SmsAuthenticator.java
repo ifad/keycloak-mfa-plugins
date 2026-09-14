@@ -33,7 +33,6 @@ import org.keycloak.authentication.AuthenticationFlowError;
 import org.keycloak.authentication.Authenticator;
 import org.keycloak.authentication.RequiredActionFactory;
 import org.keycloak.authentication.RequiredActionProvider;
-import org.keycloak.common.util.SecretGenerator;
 import org.keycloak.credential.CredentialModel;
 import org.keycloak.credential.CredentialProvider;
 import org.keycloak.models.AuthenticationExecutionModel;
@@ -93,10 +92,7 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 		int length = Integer.parseInt(config.getConfig().get("length"));
 		int ttl = Integer.parseInt(config.getConfig().get("ttl"));
 
-		String code = SecretGenerator.getInstance().randomString(length, SecretGenerator.DIGITS);
-		AuthenticationSessionModel authSession = context.getAuthenticationSession();
-		authSession.setAuthNote("code", code);
-		authSession.setAuthNote("ttl", Long.toString(System.currentTimeMillis() + (ttl * 1000L)));
+		String code = SmsCode.issue(context.getAuthenticationSession(), mobileNumber, length, ttl);
 
 		try {
 			Theme theme = session.theme().getTheme(Theme.Type.LOGIN);
@@ -122,8 +118,8 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 		String enteredCode = context.getHttpRequest().getDecodedFormParameters().getFirst("code");
 
 		AuthenticationSessionModel authSession = context.getAuthenticationSession();
-		String code = authSession.getAuthNote("code");
-		String ttl = authSession.getAuthNote("ttl");
+		String code = authSession.getAuthNote(SmsCode.CODE_NOTE);
+		String ttl = authSession.getAuthNote(SmsCode.EXPIRY_NOTE);
 
 		if (code == null || ttl == null) {
 			context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR,

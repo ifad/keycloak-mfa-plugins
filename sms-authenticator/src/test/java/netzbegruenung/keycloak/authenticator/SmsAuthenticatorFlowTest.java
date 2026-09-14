@@ -29,6 +29,7 @@ import org.keycloak.testframework.ui.annotations.InjectWebDriver;
 import org.keycloak.testframework.ui.page.ErrorPage;
 import org.keycloak.testframework.ui.page.LoginPage;
 import org.keycloak.testframework.ui.webdriver.ManagedWebDriver;
+import org.openqa.selenium.By;
 
 import java.io.InputStream;
 import java.net.URLDecoder;
@@ -42,6 +43,8 @@ import java.util.regex.Pattern;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -226,6 +229,141 @@ public class SmsAuthenticatorFlowTest {
 		} finally {
 			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "300"));
 		}
+	}
+
+	@Test
+	public void reloadingSmsCodePageResendsSameCode() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		oauth.openLoginForm();
+		loginPage.fillLogin(user.getUsername(), user.getPassword());
+		loginPage.submit();
+
+		smsCodePage.assertCurrent();
+		String firstCode = awaitSmsCode();
+
+		// A GET on the form's action URL re-runs SmsAuthenticator.authenticate() - this is
+		// what a theme's "resend code" link, a browser refresh or the back button do.
+		reloadSmsCodePage();
+
+		smsCodePage.assertCurrent();
+		String secondCode = awaitSmsCode();
+		assertEquals(firstCode, secondCode, "Expected the resend to carry the still-valid first code");
+
+		smsCodePage.enterCode(firstCode);
+		smsCodePage.submit();
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.LOGIN)
+			.userId(user.getId())
+			.details(Details.USERNAME, user.getUsername());
+	}
+
+	@Test
+	public void reloadingSmsCodePageAfterExpiryIssuesNewCode() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "2"));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			String firstCode = awaitSmsCode();
+
+			Thread.sleep(3000);
+			reloadSmsCodePage();
+
+			smsCodePage.assertCurrent();
+			String secondCode = awaitSmsCode();
+			assertNotEquals(firstCode, secondCode, "Expected a fresh code once the first one expired");
+
+			smsCodePage.enterCode(secondCode);
+			smsCodePage.submit();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.LOGIN)
+				.userId(user.getId())
+				.details(Details.USERNAME, user.getUsername());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "300"));
+		}
+	}
+
+	// PhoneValidationRequiredAction re-adds mobile_number_config to the auth session, so a
+	// reload of its code page lands on the phone number form again; re-submitting the same
+	// number must then re-send the still-valid code, a different number must get a new one.
+	@Test
+	public void resubmittingSamePhoneNumberResendsSameCode() throws Exception {
+		String firstCode = startPhoneNumberSetup("+491234567");
+
+		reloadSmsCodePage();
+		phoneNumberSetupPage.assertCurrent();
+		phoneNumberSetupPage.enterPhoneNumber("+491234567");
+		phoneNumberSetupPage.submit();
+		events.clear();
+
+		smsCodePage.assertCurrent();
+		String secondCode = awaitSmsCode();
+		assertEquals(firstCode, secondCode, "Expected the resend to carry the still-valid first code");
+
+		smsCodePage.enterCode(firstCode);
+		smsCodePage.submit();
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.CUSTOM_REQUIRED_ACTION)
+			.userId(user.getId());
+	}
+
+	@Test
+	public void submittingDifferentPhoneNumberIssuesNewCode() throws Exception {
+		String firstCode = startPhoneNumberSetup("+491234567");
+
+		reloadSmsCodePage();
+		phoneNumberSetupPage.assertCurrent();
+		phoneNumberSetupPage.enterPhoneNumber("+491234568");
+		phoneNumberSetupPage.submit();
+		events.clear();
+
+		smsCodePage.assertCurrent();
+		String secondCode = awaitSmsCode();
+		assertNotEquals(firstCode, secondCode, "Expected a fresh code for a different phone number");
+
+		smsCodePage.enterCode(secondCode);
+		smsCodePage.submit();
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.CUSTOM_REQUIRED_ACTION)
+			.userId(user.getId());
+	}
+
+	private String startPhoneNumberSetup(String phoneNumber) throws InterruptedException {
+		oauth.openLoginForm();
+		loginPage.fillLogin(user.getUsername(), user.getPassword());
+		loginPage.submit();
+
+		phoneNumberSetupPage.assertCurrent();
+		phoneNumberSetupPage.enterPhoneNumber(phoneNumber);
+		phoneNumberSetupPage.submit();
+		events.clear();
+
+		smsCodePage.assertCurrent();
+		return awaitSmsCode();
+	}
+
+	// A GET on the form's action URL without session_code is not an action request, so
+	// Keycloak re-runs the current step (SmsAuthenticator.authenticate() /
+	// PhoneValidationRequiredAction.requiredActionChallenge()) - this is what a theme's
+	// "resend code" link, a browser refresh or the back button do. With session_code
+	// present, Keycloak would route the GET to action()/processAction() instead.
+	private void reloadSmsCodePage() {
+		String actionUrl = driver.findElement(By.id("kc-sms-code-login-form")).getAttribute("action");
+		driver.open(actionUrl.replaceAll("session_code=[^&]*&?", ""));
 	}
 
 	private void registerPhoneNumber() throws InterruptedException {

@@ -29,7 +29,6 @@ import org.jboss.logging.Logger;
 import org.keycloak.authentication.CredentialRegistrator;
 import org.keycloak.authentication.RequiredActionContext;
 import org.keycloak.authentication.RequiredActionProvider;
-import org.keycloak.common.util.SecretGenerator;
 import org.keycloak.credential.CredentialProvider;
 import org.keycloak.models.AuthenticatorConfigModel;
 import org.keycloak.models.KeycloakSession;
@@ -67,9 +66,7 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 			int length = Integer.parseInt(config.getConfig().get("length"));
 			int ttl = Integer.parseInt(config.getConfig().get("ttl"));
 
-			String code = SecretGenerator.getInstance().randomString(length, SecretGenerator.DIGITS);
-			authSession.setAuthNote("code", code);
-			authSession.setAuthNote("ttl", Long.toString(System.currentTimeMillis() + (ttl * 1000L)));
+			String code = SmsCode.issue(authSession, mobileNumber, length, ttl);
 
 			Theme theme = context.getSession().theme().getTheme(Theme.Type.LOGIN);
 			Locale locale = context.getSession().getContext().resolveLocale(user);
@@ -94,8 +91,8 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 
 		AuthenticationSessionModel authSession = context.getAuthenticationSession();
 		String mobileNumber = authSession.getAuthNote("mobile_number");
-		String code = authSession.getAuthNote("code");
-		String ttl = authSession.getAuthNote("ttl");
+		String code = authSession.getAuthNote(SmsCode.CODE_NOTE);
+		String ttl = authSession.getAuthNote(SmsCode.EXPIRY_NOTE);
 
 		if (code == null || ttl == null || enteredCode == null) {
 			logger.warn("Phone number is not set");
