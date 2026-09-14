@@ -49,10 +49,16 @@ users will have to set up the SMS Authenticator.
 
 # Code re-sends
 Reloading the code page, using the back button or a theme's "resend code" link re-sends the still-valid code instead
-of generating a new one, so it does not matter which SMS arrives first. `Time-to-live` restarts with every send.
+of generating a new one, so it does not matter which SMS arrives first. The expiry is never extended: a code lives at
+most `Time-to-live`, and a re-send with less than a minute left issues a fresh code.
+
 After `Re-send limit` re-sends of one code (default 4), further code requests are blocked for `Re-send block duration`
-seconds (default 900). The block is stored per user, so restarting the login does not lift it; a code already
-delivered stays usable until it expires.
+seconds (default 900; `0` disables blocking) and a `LOGIN_ERROR` event with error `user_temporarily_disabled` is
+recorded. The block is stored per user, so restarting the login does not lift it; a code already delivered stays
+usable until it expires. The re-send counter belongs to the code: a login restart or a new browser tab gets a new
+code and a new counter, so the limit bounds reload loops, not the number of logins. Anyone holding the user's password
+can trigger the block and thereby keep that user from requesting new codes for the block duration, the same trade-off
+as Keycloak's brute-force lockout.
 
 # Testing
 This module has two kinds of automated tests, both run with `mvn test` from this directory (or `mvn install` from the repo root, which is what CI does):

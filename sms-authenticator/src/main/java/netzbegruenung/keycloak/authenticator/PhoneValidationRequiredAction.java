@@ -30,6 +30,7 @@ import org.keycloak.authentication.CredentialRegistrator;
 import org.keycloak.authentication.RequiredActionContext;
 import org.keycloak.authentication.RequiredActionProvider;
 import org.keycloak.credential.CredentialProvider;
+import org.keycloak.events.Errors;
 import org.keycloak.models.AuthenticatorConfigModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
@@ -39,7 +40,6 @@ import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.theme.Theme;
 
 import java.util.Locale;
-import java.util.Optional;
 import jakarta.ws.rs.core.Response;
 
 public class PhoneValidationRequiredAction implements RequiredActionProvider, CredentialRegistrator {
@@ -60,16 +60,21 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 			AuthenticationSessionModel authSession = context.getAuthenticationSession();
 			// TODO: get the alias from somewhere else or move config into realm or application scope
 			AuthenticatorConfigModel config = context.getRealm().getAuthenticatorConfigByAlias("sms-2fa");
+			if (config == null) {
+				logger.error("No authenticator config with alias sms-2fa found, cannot send the phone validation SMS");
+				context.failure();
+				return;
+			}
 
 			String mobileNumber = authSession.getAuthNote("mobile_number");
 			logger.infof("Validating phone number: %s of user: %s", mobileNumber, user.getUsername());
 
-			SmsCode smsCode = new SmsCode(context.getSession(), config.getConfig());
-			Optional<String> code = smsCode.issue(authSession, user, mobileNumber);
-			if (code.isEmpty()) {
+			SmsCode.Outcome outcome = new SmsCode(context.getSession(), config.getConfig()).issue(authSession, user, mobileNumber);
+			if (outcome.blocked()) {
+				context.getEvent().clone().user(user).detail("reason", "sms_resend_limit").error(Errors.USER_TEMPORARILY_DISABLED);
 				context.challenge(context.form()
 					.setAttribute("realm", realm)
-					.setError("smsAuthResendBlocked", smsCode.blockedMinutesRemaining(user).orElse(0L))
+					.setError("smsAuthResendBlocked", String.valueOf(outcome.blockedMinutesRemaining()))
 					.createForm(SmsAuthenticator.TPL_CODE));
 				return;
 			}
@@ -77,7 +82,7 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 			Theme theme = context.getSession().theme().getTheme(Theme.Type.LOGIN);
 			Locale locale = context.getSession().getContext().resolveLocale(user);
 			String smsAuthText = theme.getEnhancedMessages(realm,locale).getProperty("smsAuthText");
-			String smsText = String.format(smsAuthText, code.get(), Math.floorDiv(smsCode.getTtl(), 60));
+			String smsText = String.format(smsAuthText, outcome.code(), outcome.remainingMinutes());
 
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 
@@ -100,8 +105,13 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 		String code = authSession.getAuthNote(SmsCode.CODE_NOTE);
 		String ttl = authSession.getAuthNote(SmsCode.EXPIRY_NOTE);
 
-		if (code == null || ttl == null || enteredCode == null) {
-			logger.warn("Phone number is not set");
+		if (code == null || ttl == null) {
+			// No code in this auth session (e.g. the user was blocked and submitted anyway):
+			// re-run the challenge, which sends a code or re-shows the block.
+			requiredActionChallenge(context);
+			return;
+		}
+		if (enteredCode == null) {
 			handleInvalidSmsCode(context);
 			return;
 		}

@@ -352,6 +352,11 @@ public class SmsAuthenticatorFlowTest {
 			reloadSmsCodePage();
 			smsCodePage.assertCurrent();
 			assertResendBlocked();
+			EventAssertion.assertError(events.poll())
+				.type(EventType.LOGIN_ERROR)
+				.error("user_temporarily_disabled")
+				.userId(user.getId())
+				.details("reason", "sms_resend_limit");
 
 			// The code delivered before the block is still usable.
 			smsCodePage.enterCode(code);
@@ -388,6 +393,7 @@ public class SmsAuthenticatorFlowTest {
 			reloadSmsCodePage();
 			smsCodePage.assertCurrent();
 			assertResendBlocked();
+			events.clear();
 
 			Thread.sleep(3000);
 
@@ -438,8 +444,108 @@ public class SmsAuthenticatorFlowTest {
 
 			smsCodePage.assertCurrent();
 			assertResendBlocked();
+
+			// Submitting on that session (which holds no code) re-runs the challenge instead
+			// of failing with a server error.
+			smsCodePage.enterCode("000000");
+			smsCodePage.submit();
+			smsCodePage.assertCurrent();
+			assertResendBlocked();
 		} finally {
 			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "4"));
+		}
+	}
+
+	@Test
+	public void reloadingWithLessThanAMinuteLeftIssuesNewCode() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "30"));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			String firstCode = awaitSmsCode();
+
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			String secondCode = awaitSmsCode();
+			assertNotEquals(firstCode, secondCode, "Expected a fresh code when less than a minute is left");
+
+			smsCodePage.enterCode(secondCode);
+			smsCodePage.submit();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.LOGIN)
+				.userId(user.getId());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "300"));
+		}
+	}
+
+	@Test
+	public void resendDoesNotExtendExpiry() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "70"));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			String code = awaitSmsCode();
+
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			assertEquals(code, awaitSmsCode());
+
+			// Past the original expiry, even though the last send was a few seconds later.
+			Thread.sleep(71_000);
+
+			smsCodePage.enterCode(code);
+			smsCodePage.submit();
+
+			errorPage.assertCurrent();
+			assertTrue(errorPage.getError().contains("expired"), "Expected an expiry error, got: " + errorPage.getError());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "300"));
+		}
+	}
+
+	@Test
+	public void blankResendConfigFallsBackToDefaults() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "", "resendBlockDuration", ""));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			String code = awaitSmsCode();
+
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			assertEquals(code, awaitSmsCode());
+
+			smsCodePage.enterCode(code);
+			smsCodePage.submit();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.LOGIN)
+				.userId(user.getId());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "4", "resendBlockDuration", "900"));
 		}
 	}
 
@@ -472,6 +578,38 @@ public class SmsAuthenticatorFlowTest {
 		EventAssertion.assertSuccess(events.poll())
 			.type(EventType.CUSTOM_REQUIRED_ACTION)
 			.userId(user.getId());
+	}
+
+	@Test
+	public void resendLimitAppliesToPhoneNumberEnrollment() throws Exception {
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "1"));
+		try {
+			String code = startPhoneNumberSetup("+491234567");
+
+			reloadSmsCodePage();
+			phoneNumberSetupPage.assertCurrent();
+			phoneNumberSetupPage.enterPhoneNumber("+491234567");
+			phoneNumberSetupPage.submit();
+			smsCodePage.assertCurrent();
+			assertEquals(code, awaitSmsCode());
+
+			reloadSmsCodePage();
+			phoneNumberSetupPage.assertCurrent();
+			phoneNumberSetupPage.enterPhoneNumber("+491234567");
+			phoneNumberSetupPage.submit();
+			smsCodePage.assertCurrent();
+			assertResendBlocked();
+			events.clear();
+
+			smsCodePage.enterCode(code);
+			smsCodePage.submit();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.CUSTOM_REQUIRED_ACTION)
+				.userId(user.getId());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "4"));
+		}
 	}
 
 	@Test

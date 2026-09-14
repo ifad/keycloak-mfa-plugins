@@ -35,6 +35,7 @@ import org.keycloak.authentication.RequiredActionFactory;
 import org.keycloak.authentication.RequiredActionProvider;
 import org.keycloak.credential.CredentialModel;
 import org.keycloak.credential.CredentialProvider;
+import org.keycloak.events.Errors;
 import org.keycloak.models.AuthenticationExecutionModel;
 import org.keycloak.models.AuthenticatorConfigModel;
 import org.keycloak.models.KeycloakSession;
@@ -89,13 +90,13 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 			}
 		}
 
-		SmsCode smsCode = new SmsCode(session, config.getConfig());
-		Optional<String> code = smsCode.issue(context.getAuthenticationSession(), user, mobileNumber);
-		if (code.isEmpty()) {
+		SmsCode.Outcome outcome = new SmsCode(session, config.getConfig()).issue(context.getAuthenticationSession(), user, mobileNumber);
+		if (outcome.blocked()) {
+			context.getEvent().clone().user(user).detail("reason", "sms_resend_limit").error(Errors.USER_TEMPORARILY_DISABLED);
 			context.challenge(context.form()
 				.setAttribute("realm", realm)
 				.setAttribute("phoneNumber", mobileNumber)
-				.setError("smsAuthResendBlocked", smsCode.blockedMinutesRemaining(user).orElse(0L))
+				.setError("smsAuthResendBlocked", String.valueOf(outcome.blockedMinutesRemaining()))
 				.createForm(TPL_CODE));
 			return;
 		}
@@ -104,7 +105,7 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 			Theme theme = session.theme().getTheme(Theme.Type.LOGIN);
 			Locale locale = session.getContext().resolveLocale(user);
 			String smsAuthText = theme.getEnhancedMessages(realm,locale).getProperty("smsAuthText");
-			String smsText = String.format(smsAuthText, code.get(), Math.floorDiv(smsCode.getTtl(), 60));
+			String smsText = String.format(smsAuthText, outcome.code(), outcome.remainingMinutes());
 
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 
@@ -128,8 +129,9 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 		String ttl = authSession.getAuthNote(SmsCode.EXPIRY_NOTE);
 
 		if (code == null || ttl == null) {
-			context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR,
-				context.form().createErrorPage(Response.Status.INTERNAL_SERVER_ERROR));
+			// No code in this auth session (e.g. the user was blocked on a fresh login and
+			// submitted anyway): re-run the challenge, which sends a code or re-shows the block.
+			authenticate(context);
 			return;
 		}
 
