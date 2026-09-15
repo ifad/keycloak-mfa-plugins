@@ -72,11 +72,19 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 			logger.infof("Validating phone number: %s of user: %s", mobileNumber, user.getUsername());
 
 			SmsCode.Outcome outcome = new SmsCode(context.getSession(), config.getConfig()).issue(authSession, user, mobileNumber);
+			LoginFormsProvider form = context.form()
+				.setAttribute("realm", realm)
+				.setAttribute("resendCooldown", outcome.cooldownSecondsRemaining());
 			if (outcome.blocked()) {
 				context.getEvent().clone().user(user).detail("reason", "sms_resend_limit").error(Errors.USER_TEMPORARILY_DISABLED);
-				context.challenge(context.form()
-					.setAttribute("realm", realm)
+				context.challenge(form
 					.setError("smsAuthResendBlocked", String.valueOf(outcome.blockedMinutesRemaining()))
+					.createForm(SmsAuthenticator.TPL_CODE));
+				return;
+			}
+			if (outcome.coolingDown()) {
+				context.challenge(form
+					.setInfo("smsAuthResendCooldown", String.valueOf(outcome.cooldownSecondsRemaining()))
 					.createForm(SmsAuthenticator.TPL_CODE));
 				return;
 			}
@@ -88,7 +96,6 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 
-			LoginFormsProvider form = context.form().setAttribute("realm", realm);
 			if (outcome.resent()) {
 				form.setSuccess("smsAuthCodeResent");
 			}

@@ -49,6 +49,10 @@ public class SmsCodePage extends AbstractLoginPage {
 		resendButton.click();
 	}
 
+	public boolean isResendEnabled() {
+		return resendButton.isEnabled();
+	}
+
 	public Optional<String> getSuccessMessage() {
 		try {
 			return Optional.of(successMessage.getText());

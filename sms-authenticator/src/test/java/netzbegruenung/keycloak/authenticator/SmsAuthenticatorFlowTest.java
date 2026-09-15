@@ -44,6 +44,7 @@ import java.util.regex.Pattern;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -125,6 +126,8 @@ public class SmsAuthenticatorFlowTest {
 		config.put("countrycode", "");
 		config.put("length", "6");
 		config.put("ttl", "300");
+		// Most tests re-send right away; the cooldown has its own test.
+		config.put("resendCooldown", "0");
 		SmsTestSupport.setupSmsBrowserFlow(managedRealm, config);
 	}
 
@@ -329,6 +332,52 @@ public class SmsAuthenticatorFlowTest {
 				.userId(user.getId());
 		} finally {
 			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "4"));
+		}
+	}
+
+	@Test
+	public void resendInsideCooldownSendsNothing() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendCooldown", "3", "resendLimit", "1"));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			String code = awaitSmsCode();
+			assertFalse(smsCodePage.isResendEnabled(), "Expected the resend button to be disabled during the cooldown");
+
+			// The button is disabled, so go around it with a reload: the server still ignores
+			// the request.
+			reloadSmsCodePage();
+			smsCodePage.assertCurrent();
+			assertTrue(smsCodePage.getInfoMessage().orElse("").contains("wait"),
+				"Expected a cooldown notice, got: " + smsCodePage.getInfoMessage());
+			assertNull(smsRequestBodies.poll(2, TimeUnit.SECONDS), "Expected no SMS inside the cooldown");
+
+			Thread.sleep(1500);
+
+			// Past the cooldown the countdown has re-enabled the button; this re-send goes
+			// through and is the one that counts towards the limit - the request inside the
+			// cooldown did not.
+			assertTrue(smsCodePage.isResendEnabled(), "Expected the resend button to be enabled after the cooldown");
+			smsCodePage.resend();
+			smsCodePage.assertCurrent();
+			assertEquals(code, awaitSmsCode(), "Expected the code to be re-sent once the cooldown elapsed");
+			assertTrue(smsCodePage.getErrorMessage().isEmpty(), "Expected no block after the first counted re-send");
+
+			smsCodePage.enterCode(code);
+			smsCodePage.submit();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.LOGIN)
+				.userId(user.getId());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendCooldown", "0", "resendLimit", "4"));
 		}
 	}
 

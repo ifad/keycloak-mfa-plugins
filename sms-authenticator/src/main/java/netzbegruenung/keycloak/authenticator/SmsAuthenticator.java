@@ -95,12 +95,20 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 		}
 
 		SmsCode.Outcome outcome = new SmsCode(session, config.getConfig()).issue(context.getAuthenticationSession(), user, mobileNumber);
+		LoginFormsProvider form = context.form()
+			.setAttribute("realm", realm)
+			.setAttribute("phoneNumber", mobileNumber)
+			.setAttribute("resendCooldown", outcome.cooldownSecondsRemaining());
 		if (outcome.blocked()) {
 			context.getEvent().clone().user(user).detail("reason", "sms_resend_limit").error(Errors.USER_TEMPORARILY_DISABLED);
-			context.challenge(context.form()
-				.setAttribute("realm", realm)
-				.setAttribute("phoneNumber", mobileNumber)
+			context.challenge(form
 				.setError("smsAuthResendBlocked", String.valueOf(outcome.blockedMinutesRemaining()))
+				.createForm(TPL_CODE));
+			return;
+		}
+		if (outcome.coolingDown()) {
+			context.challenge(form
+				.setInfo("smsAuthResendCooldown", String.valueOf(outcome.cooldownSecondsRemaining()))
 				.createForm(TPL_CODE));
 			return;
 		}
@@ -113,9 +121,6 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 
-			LoginFormsProvider form = context.form()
-				.setAttribute("realm", realm)
-				.setAttribute("phoneNumber", mobileNumber);
 			if (outcome.resent()) {
 				form.setSuccess("smsAuthCodeResent");
 			}

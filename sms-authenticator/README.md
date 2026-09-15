@@ -53,6 +53,10 @@ of generating a new one, so it does not matter which SMS arrives first. Keycloak
 it starts a new login, which issues a new code. The expiry is never extended: a code lives at
 most `Time-to-live`, and a re-send with less than a minute left issues a fresh code.
 
+For `Re-send cooldown` seconds after each send (default 60; `0` disables it) further requests are ignored: nothing is
+sent, the page says how long to wait and disables the button with a countdown. Requests inside the cooldown do not
+count towards the limit below.
+
 After `Re-send limit` re-sends of one code (default 4), further code requests are blocked for `Re-send block duration`
 seconds (default 900; `0` disables blocking) and a `LOGIN_ERROR` event with error `user_temporarily_disabled` is
 recorded. The block is stored per user, so restarting the login does not lift it; a code already delivered stays
