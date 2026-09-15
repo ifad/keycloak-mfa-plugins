@@ -41,6 +41,12 @@ mount, so repeated builds only download what changed.
 This is also the way around a local JDK whose truststore lacks the ISRG roots behind `repo.maven.apache.org`
 (`PKIX path building failed`): the container image ships a current truststore.
 
+## Development builds
+`.github/workflows/snapshot.yml` publishes rolling pre-releases with the provider jars: `pr-<number>` for every
+pull request opened from a branch of this repository (replaced on each push, linked from a comment on the pull
+request, deleted when it closes) and `main-snapshot` for every push to `main`. Tagged releases are separate, see
+below.
+
 ## Releases
 Deployment is done by github actions: `.github/workflows/release.yml`
 To trigger the release workflow be sure to have proper access rights and follow the steps below.
