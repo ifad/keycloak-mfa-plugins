@@ -47,6 +47,8 @@ jobs:
             TITLE="main snapshot (${SHA:0:7})"
             NOTES="Development build of main at ${SHA}. Replaced on every push to main."
           fi
+          # build.yml also stages the unshaded original-*.jar files; only the provider jars are useful.
+          rm -f staging/original-*
           gh release delete "$TAG" --cleanup-tag --yes || true
           gh release create "$TAG" staging/* --prerelease --target "$SHA" --title "$TITLE" --notes "$NOTES"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
