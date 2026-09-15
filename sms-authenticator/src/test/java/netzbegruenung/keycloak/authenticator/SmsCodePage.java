@@ -15,8 +15,11 @@ public class SmsCodePage extends AbstractLoginPage {
 	@FindBy(id = "code")
 	private WebElement codeInput;
 
-	@FindBy(css = "#kc-sms-code-login-form input[type='submit']")
+	@FindBy(css = "#kc-sms-code-login-form input[name='login']")
 	private WebElement submitButton;
+
+	@FindBy(css = "#kc-sms-code-login-form input[name='resend']")
+	private WebElement resendButton;
 
 	public SmsCodePage(ManagedWebDriver driver) {
 		super(driver);
@@ -34,5 +37,9 @@ public class SmsCodePage extends AbstractLoginPage {
 
 	public void submit() {
 		submitButton.click();
+	}
+
+	public void resend() {
+		resendButton.click();
 	}
 }

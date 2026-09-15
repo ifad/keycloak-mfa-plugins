@@ -21,6 +21,7 @@
 
 				<div id="kc-form-buttons" class="${properties.kcFormButtonsClass!}">
 					<input name="login" class="${properties.kcButtonClass!} ${properties.kcButtonPrimaryClass!} ${properties.kcButtonBlockClass!} ${properties.kcButtonLargeClass!}" type="submit" value="${msg("doSubmit")}"/>
+					<input name="resend" class="${properties.kcButtonClass!} ${properties.kcButtonDefaultClass!} ${properties.kcButtonBlockClass!} ${properties.kcButtonLargeClass!}" type="submit" value="${msg("smsAuthResend")}" formnovalidate/>
 				</div>
 			</div>
 		</form>

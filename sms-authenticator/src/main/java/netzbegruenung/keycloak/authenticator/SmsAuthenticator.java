@@ -45,6 +45,7 @@ import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.theme.Theme;
 import org.keycloak.util.JsonSerialization;
 
+import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
 import java.util.Locale;
 import java.util.Optional;
@@ -56,6 +57,8 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 
 	private static final Logger logger = Logger.getLogger(SmsAuthenticator.class);
 	static final String TPL_CODE = "login-sms.ftl";
+	/** Name of the "Resend code" submit button in {@link #TPL_CODE}. */
+	static final String RESEND_FIELD = "resend";
 
 	@Override
 	public void authenticate(AuthenticationFlowContext context) {
@@ -122,7 +125,14 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 
 	@Override
 	public void action(AuthenticationFlowContext context) {
-		String enteredCode = context.getHttpRequest().getDecodedFormParameters().getFirst("code");
+		MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
+		if (formData.containsKey(RESEND_FIELD)) {
+			// "Resend code" button: re-run the challenge, which re-sends the current code or
+			// issues a new one, subject to the re-send limit.
+			authenticate(context);
+			return;
+		}
+		String enteredCode = formData.getFirst("code");
 
 		AuthenticationSessionModel authSession = context.getAuthenticationSession();
 		String code = authSession.getAuthNote(SmsCode.CODE_NOTE);

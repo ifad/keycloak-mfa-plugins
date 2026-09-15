@@ -48,8 +48,9 @@ If the option `Force 2FA` in the SMS Authenticator config is enabled and a user 
 users will have to set up the SMS Authenticator.
 
 # Code re-sends
-Reloading the code page, using the back button or a theme's "resend code" link re-sends the still-valid code instead
-of generating a new one, so it does not matter which SMS arrives first. The expiry is never extended: a code lives at
+The code page has a "Resend code" button. It, a page reload or the back button re-send the still-valid code instead
+of generating a new one, so it does not matter which SMS arrives first. Keycloak's "Restart login" link is different:
+it starts a new login, which issues a new code. The expiry is never extended: a code lives at
 most `Time-to-live`, and a re-send with less than a minute left issues a fresh code.
 
 After `Re-send limit` re-sends of one code (default 4), further code requests are blocked for `Re-send block duration`

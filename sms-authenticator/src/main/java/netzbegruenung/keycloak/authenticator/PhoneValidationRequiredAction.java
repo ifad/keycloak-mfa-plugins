@@ -40,6 +40,7 @@ import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.theme.Theme;
 
 import java.util.Locale;
+import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
 
 public class PhoneValidationRequiredAction implements RequiredActionProvider, CredentialRegistrator {
@@ -98,7 +99,12 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 
 	@Override
 	public void processAction(RequiredActionContext context) {
-		String enteredCode = context.getHttpRequest().getDecodedFormParameters().getFirst("code");
+		MultivaluedMap<String, String> formData = context.getHttpRequest().getDecodedFormParameters();
+		if (formData.containsKey(SmsAuthenticator.RESEND_FIELD)) {
+			requiredActionChallenge(context);
+			return;
+		}
+		String enteredCode = formData.getFirst("code");
 
 		AuthenticationSessionModel authSession = context.getAuthenticationSession();
 		String mobileNumber = authSession.getAuthNote("mobile_number");

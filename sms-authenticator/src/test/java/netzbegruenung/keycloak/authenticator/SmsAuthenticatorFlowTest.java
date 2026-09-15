@@ -295,6 +295,58 @@ public class SmsAuthenticatorFlowTest {
 	}
 
 	@Test
+	public void resendButtonResendsSameCodeAndCountsTowardsLimit() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "1"));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			String code = awaitSmsCode();
+
+			smsCodePage.resend();
+			smsCodePage.assertCurrent();
+			assertEquals(code, awaitSmsCode(), "Expected the resend button to re-send the first code");
+
+			smsCodePage.resend();
+			smsCodePage.assertCurrent();
+			assertResendBlocked();
+			events.clear();
+
+			smsCodePage.enterCode(code);
+			smsCodePage.submit();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.LOGIN)
+				.userId(user.getId());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "4"));
+		}
+	}
+
+	@Test
+	public void resendButtonWorksDuringPhoneNumberEnrollment() throws Exception {
+		String code = startPhoneNumberSetup("+491234567");
+
+		smsCodePage.resend();
+		smsCodePage.assertCurrent();
+		assertEquals(code, awaitSmsCode(), "Expected the resend button to re-send the first code");
+		events.clear();
+
+		smsCodePage.enterCode(code);
+		smsCodePage.submit();
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.CUSTOM_REQUIRED_ACTION)
+			.userId(user.getId());
+	}
+
+	@Test
 	public void reloadingSmsCodePageAfterExpiryIssuesNewCode() throws Exception {
 		registerPhoneNumber();
 		logout();
