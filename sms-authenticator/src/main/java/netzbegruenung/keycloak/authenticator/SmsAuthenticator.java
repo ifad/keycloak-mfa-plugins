@@ -42,7 +42,6 @@ import org.keycloak.models.AuthenticatorConfigModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
-import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.theme.Theme;
 import org.keycloak.util.JsonSerialization;
 
@@ -94,7 +93,7 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 			}
 		}
 
-		SmsCode.Outcome outcome = new SmsCode(session, config.getConfig()).issue(context.getAuthenticationSession(), user, mobileNumber);
+		SmsCode.Outcome outcome = new SmsCode(session, config.getConfig()).issue(user, mobileNumber);
 		LoginFormsProvider form = context.form()
 			.setAttribute("realm", realm)
 			.setAttribute("phoneNumber", mobileNumber)
@@ -141,39 +140,29 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 			authenticate(context);
 			return;
 		}
+		// May be null: a GET on the action URL with session_code reaches action() without form data.
 		String enteredCode = formData.getFirst("code");
 
-		AuthenticationSessionModel authSession = context.getAuthenticationSession();
-		String code = authSession.getAuthNote(SmsCode.CODE_NOTE);
-		String ttl = authSession.getAuthNote(SmsCode.EXPIRY_NOTE);
-
-		if (code == null || ttl == null) {
-			// No code in this auth session (e.g. the user was blocked on a fresh login and
-			// submitted anyway): re-run the challenge, which sends a code or re-shows the block.
-			authenticate(context);
-			return;
-		}
-
-		// null-safe: a GET on the action URL with session_code reaches action() without form data
-		boolean isValid = code.equals(enteredCode);
-		if (isValid) {
-			if (Long.parseLong(ttl) < System.currentTimeMillis()) {
-				// expired
-				context.failureChallenge(AuthenticationFlowError.EXPIRED_CODE,
-					context.form().setError("smsAuthCodeExpired").createErrorPage(Response.Status.BAD_REQUEST));
-			} else {
-				// valid
-				context.success();
+		SmsCode smsCode = new SmsCode(context.getSession(), context.getAuthenticatorConfig().getConfig());
+		switch (smsCode.verify(context.getUser(), enteredCode)) {
+			case NO_CODE -> {
+				// Nothing to check against (e.g. the user was blocked on a fresh login and
+				// submitted anyway, or the code was discarded): re-run the challenge, which
+				// sends a code or re-shows the block.
+				authenticate(context);
 			}
-		} else {
-			// invalid
-			String mobileNumber = getMobileNumber(context);
-			context.getEvent().user(context.getUser()).error("invalid_user_credentials");
-			Response challenge = context.form()
-				.setAttribute("phoneNumber", mobileNumber)
-				.setError("smsAuthCodeInvalid")
-				.createForm("login-sms.ftl");
-			context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
+			case EXPIRED -> context.failureChallenge(AuthenticationFlowError.EXPIRED_CODE,
+				context.form().setError("smsAuthCodeExpired").createErrorPage(Response.Status.BAD_REQUEST));
+			case VALID -> context.success();
+			case INVALID -> {
+				String mobileNumber = getMobileNumber(context);
+				context.getEvent().user(context.getUser()).error("invalid_user_credentials");
+				Response challenge = context.form()
+					.setAttribute("phoneNumber", mobileNumber)
+					.setError("smsAuthCodeInvalid")
+					.createForm("login-sms.ftl");
+				context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS, challenge);
+			}
 		}
 	}
 

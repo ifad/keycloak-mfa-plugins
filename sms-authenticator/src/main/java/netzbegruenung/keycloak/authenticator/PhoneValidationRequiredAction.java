@@ -69,9 +69,9 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 			}
 
 			String mobileNumber = authSession.getAuthNote("mobile_number");
-			logger.infof("Validating phone number: %s of user: %s", mobileNumber, user.getUsername());
+			logger.infof("Validating phone number of user: %s", user.getUsername());
 
-			SmsCode.Outcome outcome = new SmsCode(context.getSession(), config.getConfig()).issue(authSession, user, mobileNumber);
+			SmsCode.Outcome outcome = new SmsCode(context.getSession(), config.getConfig()).issue(user, mobileNumber);
 			LoginFormsProvider form = context.form()
 				.setAttribute("realm", realm)
 				.setAttribute("resendCooldown", outcome.cooldownSecondsRemaining());
@@ -117,23 +117,21 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 
 		AuthenticationSessionModel authSession = context.getAuthenticationSession();
 		String mobileNumber = authSession.getAuthNote("mobile_number");
-		String code = authSession.getAuthNote(SmsCode.CODE_NOTE);
-		String ttl = authSession.getAuthNote(SmsCode.EXPIRY_NOTE);
+		AuthenticatorConfigModel config = context.getRealm().getAuthenticatorConfigByAlias("sms-2fa");
+		if (config == null) {
+			logger.error("No authenticator config with alias sms-2fa found, cannot verify the phone validation SMS");
+			context.failure();
+			return;
+		}
 
-		if (code == null || ttl == null) {
-			// No code in this auth session (e.g. the user was blocked and submitted anyway):
-			// re-run the challenge, which sends a code or re-shows the block.
+		SmsCode.Verification verification = new SmsCode(context.getSession(), config.getConfig()).verify(context.getUser(), enteredCode);
+		if (verification == SmsCode.Verification.NO_CODE) {
+			// Nothing to check against (e.g. the user was blocked and submitted anyway, or the
+			// code was discarded): re-run the challenge, which sends a code or re-shows the block.
 			requiredActionChallenge(context);
 			return;
 		}
-		if (enteredCode == null) {
-			handleInvalidSmsCode(context);
-			return;
-		}
-
-		boolean isValid = enteredCode.equals(code);
-		if (isValid && Long.parseLong(ttl) > System.currentTimeMillis()) {
-			// valid
+		if (verification == SmsCode.Verification.VALID) {
 			SmsAuthCredentialProvider smnp = (SmsAuthCredentialProvider) context.getSession().getProvider(CredentialProvider.class, "mobile-number");
 			if (!smnp.isConfiguredFor(context.getRealm(), context.getUser(), SmsAuthCredentialModel.TYPE)) {
 				smnp.createCredential(context.getRealm(), context.getUser(), SmsAuthCredentialModel.createSmsAuthenticator(mobileNumber));
@@ -165,6 +163,7 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 	}
 
 	private void handleInvalidSmsCode(RequiredActionContext context) {
+		context.getEvent().clone().user(context.getUser()).error(Errors.INVALID_USER_CREDENTIALS);
 		Response challenge = context
 			.form()
 			.setAttribute("realm", context.getRealm())

@@ -197,6 +197,8 @@ public class SmsAuthenticatorFlowTest {
 		smsCodePage.assertCurrent();
 		events.clear();
 
+		// Verifications of one user's code are throttled to one per second.
+		Thread.sleep(1100);
 		smsCodePage.enterCode(correctCode);
 		smsCodePage.submit();
 
@@ -229,6 +231,7 @@ public class SmsAuthenticatorFlowTest {
 			"Expected the invalid-code error, got: " + smsCodePage.getErrorMessage());
 		events.clear();
 
+		Thread.sleep(1100);
 		smsCodePage.enterCode(code);
 		smsCodePage.submit();
 
@@ -236,6 +239,74 @@ public class SmsAuthenticatorFlowTest {
 			.type(EventType.LOGIN)
 			.userId(user.getId())
 			.details(Details.USERNAME, user.getUsername());
+	}
+
+	@Test
+	public void restartedLoginResendsSameCode() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		oauth.openLoginForm();
+		loginPage.fillLogin(user.getUsername(), user.getPassword());
+		loginPage.submit();
+		smsCodePage.assertCurrent();
+		String code = awaitSmsCode();
+
+		// New auth session: the code and its counters live per user, not per session.
+		driver.cookies().deleteAll();
+		oauth.openLoginForm();
+		loginPage.fillLogin(user.getUsername(), user.getPassword());
+		loginPage.submit();
+		smsCodePage.assertCurrent();
+		assertEquals(code, awaitSmsCode(), "Expected the restarted login to re-send the same code");
+		assertTrue(smsCodePage.getSuccessMessage().orElse("").contains("sent again"));
+
+		smsCodePage.enterCode(code);
+		smsCodePage.submit();
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.LOGIN)
+			.userId(user.getId());
+	}
+
+	@Test
+	public void wrongGuessesDiscardTheCode() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		oauth.openLoginForm();
+		loginPage.fillLogin(user.getUsername(), user.getPassword());
+		loginPage.submit();
+		smsCodePage.assertCurrent();
+		String code = awaitSmsCode();
+		String wrongCode = "000000".equals(code) ? "111111" : "000000";
+
+		for (int i = 0; i < 5; i++) {
+			Thread.sleep(1100);
+			smsCodePage.enterCode(wrongCode);
+			smsCodePage.submit();
+			smsCodePage.assertCurrent();
+			assertTrue(smsCodePage.getErrorMessage().orElse("").contains("Invalid"), "Guess " + (i + 1) + " should be rejected");
+		}
+
+		// The code is gone: even the right one is not accepted any more, a new one is sent.
+		Thread.sleep(1100);
+		smsCodePage.enterCode(code);
+		smsCodePage.submit();
+		smsCodePage.assertCurrent();
+		String newCode = awaitSmsCode();
+		assertNotEquals(code, newCode, "Expected a fresh code after the old one was discarded");
+		events.clear();
+
+		Thread.sleep(1100);
+		smsCodePage.enterCode(newCode);
+		smsCodePage.submit();
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.LOGIN)
+			.userId(user.getId());
 	}
 
 	@Test
@@ -476,7 +547,7 @@ public class SmsAuthenticatorFlowTest {
 	}
 
 	@Test
-	public void resendLimitCountsAcrossCodesWithinOneLoginAttempt() throws Exception {
+	public void resendLimitCountsAcrossCodes() throws Exception {
 		registerPhoneNumber();
 		logout();
 		events.clear();
@@ -568,7 +639,7 @@ public class SmsAuthenticatorFlowTest {
 			loginPage.submit();
 
 			smsCodePage.assertCurrent();
-			awaitSmsCode();
+			String code = awaitSmsCode();
 			reloadSmsCodePage();
 			smsCodePage.assertCurrent();
 			awaitSmsCode();
@@ -586,13 +657,16 @@ public class SmsAuthenticatorFlowTest {
 
 			smsCodePage.assertCurrent();
 			assertResendBlocked();
+			events.clear();
 
-			// Submitting on that session (which holds no code) re-runs the challenge instead
-			// of failing with a server error.
-			smsCodePage.enterCode("000000");
+			// The code from the SMS delivered before the block is kept per user too, so it
+			// still works in the new attempt.
+			smsCodePage.enterCode(code);
 			smsCodePage.submit();
-			smsCodePage.assertCurrent();
-			assertResendBlocked();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.LOGIN)
+				.userId(user.getId());
 		} finally {
 			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("resendLimit", "4"));
 		}
@@ -815,6 +889,10 @@ public class SmsAuthenticatorFlowTest {
 		smsCodePage.assertCurrent();
 		smsCodePage.enterCode(awaitSmsCode());
 		smsCodePage.submit();
+
+		// Verifications of one user's code are throttled to one per second, and the tests
+		// are fast enough to hit that with the login that follows.
+		Thread.sleep(1100);
 	}
 
 	private void logout() {
