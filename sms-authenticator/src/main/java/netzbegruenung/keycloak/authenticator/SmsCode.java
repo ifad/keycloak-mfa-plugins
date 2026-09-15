@@ -77,20 +77,22 @@ final class SmsCode {
 	 * Outcome of {@link #issue}: a code to send, or nothing because the user is blocked or
 	 * still inside the cooldown. {@code resent} is true when the user already had a code,
 	 * i.e. this send was requested again and deserves feedback on the page.
-	 * {@code nextSendAtMillis} is when the page may offer a re-send again.
+	 * {@code nextSendAtMillis} is when the page may offer a re-send again; {@code resendsLeft}
+	 * how many more sends the current window allows before the block.
 	 */
-	record Outcome(String code, long expiresAtMillis, long blockedUntilMillis, long nextSendAtMillis, boolean resent) {
+	record Outcome(String code, long expiresAtMillis, long blockedUntilMillis, long nextSendAtMillis, boolean resent,
+				   int resendsLeft) {
 
-		static Outcome issued(String code, long expiresAtMillis, long nextSendAtMillis, boolean resent) {
-			return new Outcome(code, expiresAtMillis, 0L, nextSendAtMillis, resent);
+		static Outcome issued(String code, long expiresAtMillis, long nextSendAtMillis, boolean resent, int resendsLeft) {
+			return new Outcome(code, expiresAtMillis, 0L, nextSendAtMillis, resent, resendsLeft);
 		}
 
 		static Outcome blocked(long blockedUntilMillis) {
-			return new Outcome(null, 0L, blockedUntilMillis, blockedUntilMillis, false);
+			return new Outcome(null, 0L, blockedUntilMillis, blockedUntilMillis, false, 0);
 		}
 
 		static Outcome coolingDown(long nextSendAtMillis) {
-			return new Outcome(null, 0L, 0L, nextSendAtMillis, false);
+			return new Outcome(null, 0L, 0L, nextSendAtMillis, false, 0);
 		}
 
 		boolean blocked() {
@@ -204,7 +206,7 @@ final class SmsCode {
 			logger.debugf("Issuing new SMS code of user %s (%s, send %d of %d in this window)", user.getUsername(),
 				resent ? "previous code expired, about to expire or sent elsewhere" : "no current code", count, resendLimit + 1);
 		}
-		return Outcome.issued(code, expiresAt, now + (resendCooldown * 1000L), resent);
+		return Outcome.issued(code, expiresAt, now + (resendCooldown * 1000L), resent, Math.max(0, resendLimit + 1 - count));
 	}
 
 	Verification verify(UserModel user, String enteredCode) {

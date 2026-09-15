@@ -97,7 +97,7 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 
 			if (outcome.resent()) {
-				form.setSuccess("smsAuthCodeResent");
+				form.setSuccess("smsAuthCodeResent", String.valueOf(outcome.resendsLeft()));
 			}
 			context.challenge(form.createForm(SmsAuthenticator.TPL_CODE));
 		} catch (Exception e) {

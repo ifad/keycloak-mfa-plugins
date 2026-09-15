@@ -522,6 +522,9 @@ public class SmsAuthenticatorFlowTest {
 				reloadSmsCodePage();
 				smsCodePage.assertCurrent();
 				assertEquals(code, awaitSmsCode(), "Resend " + (i + 1) + " should still carry the first code");
+				String expectedLeft = (1 - i) + " re-send(s) left";
+				assertTrue(smsCodePage.getSuccessMessage().orElse("").contains(expectedLeft),
+					"Expected '" + expectedLeft + "', got: " + smsCodePage.getSuccessMessage());
 			}
 
 			reloadSmsCodePage();

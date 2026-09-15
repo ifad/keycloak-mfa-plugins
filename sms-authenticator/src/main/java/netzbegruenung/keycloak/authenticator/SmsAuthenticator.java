@@ -121,7 +121,7 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 
 			if (outcome.resent()) {
-				form.setSuccess("smsAuthCodeResent");
+				form.setSuccess("smsAuthCodeResent", String.valueOf(outcome.resendsLeft()));
 			}
 			context.challenge(form.createForm(TPL_CODE));
 		} catch (Exception e) {
