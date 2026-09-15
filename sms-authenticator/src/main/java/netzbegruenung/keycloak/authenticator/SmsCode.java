@@ -206,7 +206,11 @@ final class SmsCode {
 			logger.debugf("Issuing new SMS code of user %s (%s, send %d of %d in this window)", user.getUsername(),
 				resent ? "previous code expired, about to expire or sent elsewhere" : "no current code", count, resendLimit + 1);
 		}
-		return Outcome.issued(code, expiresAt, now + (resendCooldown * 1000L), resent, Math.max(0, resendLimit + 1 - count));
+		int resendsLeft = Math.max(0, resendLimit + 1 - count);
+		// After the last allowed send the page counts down to the end of the window, when
+		// sends are possible again, so a button user never runs into the block.
+		long nextSendAt = resendsLeft == 0 ? Math.max(windowEnd, now + (resendCooldown * 1000L)) : now + (resendCooldown * 1000L);
+		return Outcome.issued(code, expiresAt, nextSendAt, resent, resendsLeft);
 	}
 
 	Verification verify(UserModel user, String enteredCode) {

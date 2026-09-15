@@ -33,7 +33,7 @@
 					var left = ${resendCooldown?c};
 					var format = function (seconds) {
 						if (seconds < 60) {
-							return seconds + " s";
+							return String(seconds);
 						}
 						var rest = seconds % 60;
 						return Math.floor(seconds / 60) + ":" + (rest < 10 ? "0" : "") + rest;

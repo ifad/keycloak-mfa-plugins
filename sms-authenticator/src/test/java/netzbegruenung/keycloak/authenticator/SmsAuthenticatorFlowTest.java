@@ -390,7 +390,9 @@ public class SmsAuthenticatorFlowTest {
 			assertTrue(smsCodePage.getSuccessMessage().orElse("").contains("sent again"),
 				"Expected feedback that the code was sent again, got: " + smsCodePage.getSuccessMessage());
 
-			smsCodePage.resend();
+			// No re-sends left: the button stays disabled; a reload goes around it and blocks.
+			assertFalse(smsCodePage.isResendEnabled());
+			reloadSmsCodePage();
 			smsCodePage.assertCurrent();
 			assertResendBlocked();
 			events.clear();
@@ -421,7 +423,7 @@ public class SmsAuthenticatorFlowTest {
 			smsCodePage.assertCurrent();
 			String code = awaitSmsCode();
 			assertFalse(smsCodePage.isResendEnabled(), "Expected the resend button to be disabled during the cooldown");
-			assertTrue(smsCodePage.getResendLabel().matches("Resend code \\(\\d+ s\\)"),
+			assertTrue(smsCodePage.getResendLabel().matches("Resend code \\(\\d+\\)"),
 				"Expected a seconds countdown on the button, got: " + smsCodePage.getResendLabel());
 
 			// The button is disabled, so go around it with a reload: the server still ignores
@@ -529,6 +531,13 @@ public class SmsAuthenticatorFlowTest {
 					"Expected '" + expectedLeft + "', got: " + smsCodePage.getSuccessMessage());
 			}
 
+			// Nothing left: the button stays disabled and counts down to the end of the window
+			// (minutes here) instead of offering a press that would block the user.
+			assertFalse(smsCodePage.isResendEnabled(), "Expected the resend button to stay disabled with no re-sends left");
+			assertTrue(smsCodePage.getResendLabel().matches("Resend code \\(\\d+:\\d\\d\\)"),
+				"Expected an m:ss countdown on the button, got: " + smsCodePage.getResendLabel());
+
+			// Going around the button with a reload hits the block.
 			reloadSmsCodePage();
 			smsCodePage.assertCurrent();
 			assertResendBlocked();
@@ -572,8 +581,10 @@ public class SmsAuthenticatorFlowTest {
 			String secondCode = awaitSmsCode();
 			assertNotEquals(firstCode, secondCode);
 
-			// Second re-send of this attempt: blocked even though the code changed in between.
-			smsCodePage.resend();
+			// Second re-send: blocked even though the code changed in between. The button is
+			// already disabled, so use a reload.
+			assertFalse(smsCodePage.isResendEnabled());
+			reloadSmsCodePage();
 			smsCodePage.assertCurrent();
 			assertResendBlocked();
 			events.clear();
