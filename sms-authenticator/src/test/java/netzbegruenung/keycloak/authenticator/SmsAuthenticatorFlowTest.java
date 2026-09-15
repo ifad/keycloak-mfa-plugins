@@ -421,6 +421,8 @@ public class SmsAuthenticatorFlowTest {
 			smsCodePage.assertCurrent();
 			String code = awaitSmsCode();
 			assertFalse(smsCodePage.isResendEnabled(), "Expected the resend button to be disabled during the cooldown");
+			assertTrue(smsCodePage.getResendLabel().matches("Resend code \\(\\d+ s\\)"),
+				"Expected a seconds countdown on the button, got: " + smsCodePage.getResendLabel());
 
 			// The button is disabled, so go around it with a reload: the server still ignores
 			// the request.

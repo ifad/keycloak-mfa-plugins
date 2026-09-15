@@ -31,6 +31,13 @@
 					var button = document.getElementById("kc-sms-resend");
 					var label = button.value;
 					var left = ${resendCooldown?c};
+					var format = function (seconds) {
+						if (seconds < 60) {
+							return seconds + " s";
+						}
+						var rest = seconds % 60;
+						return Math.floor(seconds / 60) + ":" + (rest < 10 ? "0" : "") + rest;
+					};
 					var tick = function () {
 						if (left <= 0) {
 							button.disabled = false;
@@ -38,7 +45,7 @@
 							return;
 						}
 						button.disabled = true;
-						button.value = label + " (" + left + ")";
+						button.value = label + " (" + format(left) + ")";
 						left--;
 						setTimeout(tick, 1000);
 					};
