@@ -35,6 +35,7 @@ import org.keycloak.authentication.RequiredActionFactory;
 import org.keycloak.authentication.RequiredActionProvider;
 import org.keycloak.credential.CredentialModel;
 import org.keycloak.credential.CredentialProvider;
+import org.keycloak.forms.login.LoginFormsProvider;
 import org.keycloak.events.Errors;
 import org.keycloak.models.AuthenticationExecutionModel;
 import org.keycloak.models.AuthenticatorConfigModel;
@@ -112,10 +113,13 @@ public class SmsAuthenticator implements Authenticator, CredentialValidator<SmsA
 
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 
-			context.challenge(context.form()
+			LoginFormsProvider form = context.form()
 				.setAttribute("realm", realm)
-				.setAttribute("phoneNumber", mobileNumber)
-				.createForm(TPL_CODE));
+				.setAttribute("phoneNumber", mobileNumber);
+			if (outcome.resent()) {
+				form.setSuccess("smsAuthCodeResent");
+			}
+			context.challenge(form.createForm(TPL_CODE));
 		} catch (Exception e) {
 			context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR,
 				context.form().setError("smsAuthSmsNotSent", "Error. Use another method.")

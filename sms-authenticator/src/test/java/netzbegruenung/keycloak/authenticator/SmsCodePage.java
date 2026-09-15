@@ -2,8 +2,11 @@ package netzbegruenung.keycloak.authenticator;
 
 import org.keycloak.testframework.ui.page.AbstractLoginPage;
 import org.keycloak.testframework.ui.webdriver.ManagedWebDriver;
+import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.FindBy;
+
+import java.util.Optional;
 
 /**
  * login-sms.ftl (SmsAuthenticator.TPL_CODE). Its code input shares id="code" with
@@ -20,6 +23,9 @@ public class SmsCodePage extends AbstractLoginPage {
 
 	@FindBy(css = "#kc-sms-code-login-form input[name='resend']")
 	private WebElement resendButton;
+
+	@FindBy(className = "pf-m-success")
+	private WebElement successMessage;
 
 	public SmsCodePage(ManagedWebDriver driver) {
 		super(driver);
@@ -41,5 +47,13 @@ public class SmsCodePage extends AbstractLoginPage {
 
 	public void resend() {
 		resendButton.click();
+	}
+
+	public Optional<String> getSuccessMessage() {
+		try {
+			return Optional.of(successMessage.getText());
+		} catch (NoSuchElementException e) {
+			return Optional.empty();
+		}
 	}
 }

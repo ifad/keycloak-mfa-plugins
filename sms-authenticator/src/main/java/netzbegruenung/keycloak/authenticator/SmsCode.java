@@ -44,15 +44,19 @@ final class SmsCode {
 	/** Below this remaining lifetime a re-send issues a fresh code rather than a nearly expired one. */
 	static final int MIN_REMAINING_SECONDS = 60;
 
-	/** Outcome of {@link #issue}: either a code to send, or the time until which the user is blocked. */
-	record Outcome(String code, long expiresAtMillis, long blockedUntilMillis) {
+	/**
+	 * Outcome of {@link #issue}: either a code to send, or the time until which the user is
+	 * blocked. {@code resent} is true when the session already had a code, i.e. this send
+	 * was requested again by the user and deserves feedback on the page.
+	 */
+	record Outcome(String code, long expiresAtMillis, long blockedUntilMillis, boolean resent) {
 
-		static Outcome issued(String code, long expiresAtMillis) {
-			return new Outcome(code, expiresAtMillis, 0L);
+		static Outcome issued(String code, long expiresAtMillis, boolean resent) {
+			return new Outcome(code, expiresAtMillis, 0L, resent);
 		}
 
 		static Outcome blocked(long blockedUntilMillis) {
-			return new Outcome(null, 0L, blockedUntilMillis);
+			return new Outcome(null, 0L, blockedUntilMillis, false);
 		}
 
 		boolean blocked() {
@@ -92,6 +96,7 @@ final class SmsCode {
 		}
 
 		String code = authSession.getAuthNote(CODE_NOTE);
+		boolean resent = code != null;
 		long expiresAt = parseLongOrZero(authSession.getAuthNote(EXPIRY_NOTE));
 		boolean reusable = code != null
 			&& expiresAt - now >= MIN_REMAINING_SECONDS * 1000L
@@ -103,7 +108,7 @@ final class SmsCode {
 			authSession.setAuthNote(EXPIRY_NOTE, Long.toString(expiresAt));
 			authSession.setAuthNote(RECIPIENT_NOTE, recipient);
 			authSession.setAuthNote(RESENDS_NOTE, "0");
-			return Outcome.issued(code, expiresAt);
+			return Outcome.issued(code, expiresAt, resent);
 		}
 
 		int resends = parseIntOrZero(authSession.getAuthNote(RESENDS_NOTE)) + 1;
@@ -114,7 +119,7 @@ final class SmsCode {
 			return Outcome.blocked(blockedUntil);
 		}
 		authSession.setAuthNote(RESENDS_NOTE, Integer.toString(resends));
-		return Outcome.issued(code, expiresAt);
+		return Outcome.issued(code, expiresAt, resent);
 	}
 
 	/** Epoch millis until which the user is blocked, or 0 when not blocked. */

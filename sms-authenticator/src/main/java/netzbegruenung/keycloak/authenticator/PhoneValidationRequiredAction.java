@@ -30,6 +30,7 @@ import org.keycloak.authentication.CredentialRegistrator;
 import org.keycloak.authentication.RequiredActionContext;
 import org.keycloak.authentication.RequiredActionProvider;
 import org.keycloak.credential.CredentialProvider;
+import org.keycloak.forms.login.LoginFormsProvider;
 import org.keycloak.events.Errors;
 import org.keycloak.models.AuthenticatorConfigModel;
 import org.keycloak.models.KeycloakSession;
@@ -87,10 +88,11 @@ public class PhoneValidationRequiredAction implements RequiredActionProvider, Cr
 
 			SmsServiceFactory.get(config.getConfig()).send(mobileNumber, smsText);
 
-			Response challenge = context.form()
-				.setAttribute("realm", realm)
-				.createForm(SmsAuthenticator.TPL_CODE);
-			context.challenge(challenge);
+			LoginFormsProvider form = context.form().setAttribute("realm", realm);
+			if (outcome.resent()) {
+				form.setSuccess("smsAuthCodeResent");
+			}
+			context.challenge(form.createForm(SmsAuthenticator.TPL_CODE));
 		} catch (Exception e) {
 			logger.error(e.getMessage(), e);
 			context.failure();

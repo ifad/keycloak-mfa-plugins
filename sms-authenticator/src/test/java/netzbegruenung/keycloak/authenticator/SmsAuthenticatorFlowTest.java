@@ -308,10 +308,13 @@ public class SmsAuthenticatorFlowTest {
 
 			smsCodePage.assertCurrent();
 			String code = awaitSmsCode();
+			assertTrue(smsCodePage.getSuccessMessage().isEmpty(), "No feedback expected on the first send");
 
 			smsCodePage.resend();
 			smsCodePage.assertCurrent();
 			assertEquals(code, awaitSmsCode(), "Expected the resend button to re-send the first code");
+			assertTrue(smsCodePage.getSuccessMessage().orElse("").contains("sent again"),
+				"Expected feedback that the code was sent again, got: " + smsCodePage.getSuccessMessage());
 
 			smsCodePage.resend();
 			smsCodePage.assertCurrent();
