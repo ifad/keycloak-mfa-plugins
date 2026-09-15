@@ -109,9 +109,10 @@ final class SmsCode {
 			return millis <= 0L ? 0L : (millis + 999L) / 1000L;
 		}
 
-		/** Whole minutes the code stays valid, for the SMS text. */
+		/** Minutes the code stays valid, rounded to the nearest minute (at least 1), for the SMS text. */
 		long remainingMinutes() {
-			return Math.floorDiv(Math.max(0L, expiresAtMillis - System.currentTimeMillis()) / 1000L, 60L);
+			long seconds = Math.max(0L, expiresAtMillis - System.currentTimeMillis()) / 1000L;
+			return Math.max(1L, (seconds + 30L) / 60L);
 		}
 
 		/** Whole minutes (at least 1) until the user may request codes again. */

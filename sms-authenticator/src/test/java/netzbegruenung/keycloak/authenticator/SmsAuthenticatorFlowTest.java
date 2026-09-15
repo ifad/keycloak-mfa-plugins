@@ -100,6 +100,7 @@ public class SmsAuthenticatorFlowTest {
 	// JUnit5 creates a fresh test instance per method - an instance field here would leave
 	// every instance but the first reading from a queue the shared handler never writes to.
 	private static final LinkedBlockingQueue<String> smsRequestBodies = new LinkedBlockingQueue<>();
+	private String lastSmsBody;
 
 	@TestSetup
 	public void setup() {
@@ -170,6 +171,7 @@ public class SmsAuthenticatorFlowTest {
 
 		smsCodePage.assertCurrent();
 		smsCodePage.enterCode(awaitSmsCode());
+		assertTrue(lastSmsBody.contains("5 minutes"), "Expected the fresh code to be announced as valid for 5 minutes, got: " + lastSmsBody);
 		smsCodePage.submit();
 
 		EventAssertion.assertSuccess(events.poll())
@@ -526,7 +528,7 @@ public class SmsAuthenticatorFlowTest {
 				reloadSmsCodePage();
 				smsCodePage.assertCurrent();
 				assertEquals(code, awaitSmsCode(), "Resend " + (i + 1) + " should still carry the first code");
-				String expectedLeft = (1 - i) + " re-send(s) left";
+				String expectedLeft = i == 0 ? "1 re-send(s) left" : "No re-sends left";
 				assertTrue(smsCodePage.getSuccessMessage().orElse("").contains(expectedLeft),
 					"Expected '" + expectedLeft + "', got: " + smsCodePage.getSuccessMessage());
 			}
@@ -921,6 +923,7 @@ public class SmsAuthenticatorFlowTest {
 		Map<String, String> form = parseFormData(body);
 		String message = form.get("body");
 		assertThat("Expected the SMS gateway to receive a message body", message, notNullValue());
+		lastSmsBody = message;
 		Matcher matcher = CODE_PATTERN.matcher(message);
 		assertTrue(matcher.find(), "Expected a 6-digit code in the SMS body: " + message);
 		return matcher.group(1);
