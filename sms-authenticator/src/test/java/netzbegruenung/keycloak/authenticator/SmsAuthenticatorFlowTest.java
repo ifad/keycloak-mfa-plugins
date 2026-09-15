@@ -476,6 +476,44 @@ public class SmsAuthenticatorFlowTest {
 	}
 
 	@Test
+	public void resendLimitCountsAcrossCodesWithinOneLoginAttempt() throws Exception {
+		registerPhoneNumber();
+		logout();
+		events.clear();
+
+		// ttl 30: every re-send is under a minute from expiry and therefore issues a new code.
+		SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "30", "resendLimit", "1"));
+		try {
+			oauth.openLoginForm();
+			loginPage.fillLogin(user.getUsername(), user.getPassword());
+			loginPage.submit();
+
+			smsCodePage.assertCurrent();
+			String firstCode = awaitSmsCode();
+
+			smsCodePage.resend();
+			smsCodePage.assertCurrent();
+			String secondCode = awaitSmsCode();
+			assertNotEquals(firstCode, secondCode);
+
+			// Second re-send of this attempt: blocked even though the code changed in between.
+			smsCodePage.resend();
+			smsCodePage.assertCurrent();
+			assertResendBlocked();
+			events.clear();
+
+			smsCodePage.enterCode(secondCode);
+			smsCodePage.submit();
+
+			EventAssertion.assertSuccess(events.poll())
+				.type(EventType.LOGIN)
+				.userId(user.getId());
+		} finally {
+			SmsTestSupport.updateSmsExecutionConfig(managedRealm, Map.of("ttl", "300", "resendLimit", "4"));
+		}
+	}
+
+	@Test
 	public void resendBlockExpiresAfterConfiguredDuration() throws Exception {
 		registerPhoneNumber();
 		logout();

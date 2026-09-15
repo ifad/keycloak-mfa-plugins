@@ -57,11 +57,12 @@ For `Re-send cooldown` seconds after each send (default 60; `0` disables it) fur
 sent, the page says how long to wait and disables the button with a countdown. Requests inside the cooldown do not
 count towards the limit below.
 
-After `Re-send limit` re-sends of one code (default 4), further code requests are blocked for `Re-send block duration`
-seconds (default 900; `0` disables blocking) and a `LOGIN_ERROR` event with error `user_temporarily_disabled` is
-recorded. The block is stored per user, so restarting the login does not lift it; a code already delivered stays
-usable until it expires. The re-send counter belongs to the code: a login restart or a new browser tab gets a new
-code and a new counter, so the limit bounds reload loops, not the number of logins. Anyone holding the user's password
+After `Re-send limit` re-sends within one login attempt (default 4; re-sends of the same code and fresh codes both
+count), further code requests are blocked for `Re-send block duration` seconds (default 900; `0` disables blocking)
+and a `LOGIN_ERROR` event with error `user_temporarily_disabled` is recorded. The block is stored per user, so
+restarting the login does not lift it; a code already delivered stays usable until it expires. The counter lives in
+the login attempt: a login restart or a new browser tab starts a new attempt with a fresh counter, so the limit
+bounds requests per attempt, not the number of logins. Anyone holding the user's password
 can trigger the block and thereby keep that user from requesting new codes for the block duration, the same trade-off
 as Keycloak's brute-force lockout.
 

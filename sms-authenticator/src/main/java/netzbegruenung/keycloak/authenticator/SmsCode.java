@@ -20,11 +20,12 @@ import java.util.Map;
  * A re-send within {@code resendCooldown} seconds of the previous send is ignored: nothing
  * is sent and it does not count as a re-send. The page disables the button for that time.
  * <p>
- * After {@code resendLimit} re-sends of one code, further code requests are blocked for
+ * After {@code resendLimit} re-sends within one login attempt (auth session), whether
+ * they re-sent the same code or issued a new one, further code requests are blocked for
  * {@code resendBlockDuration} seconds. The block is stored per user in Keycloak's
  * single-use object store, so restarting the login does not lift it; the code already
- * delivered stays valid until its expiry. The re-send counter itself belongs to the code:
- * a login restart or a new browser tab gets a new code and a new counter.
+ * delivered stays valid until its expiry. The counter itself lives in the auth session:
+ * a login restart or a new browser tab starts a new attempt with a fresh counter.
  */
 final class SmsCode {
 
@@ -127,18 +128,21 @@ final class SmsCode {
 			return Outcome.coolingDown(nextSendAt);
 		}
 
+		// Every send after the first one in this login attempt counts, whether it re-sends
+		// the same code or issues a new one.
+		int resends = parseIntOrZero(authSession.getAuthNote(RESENDS_NOTE)) + (resent ? 1 : 0);
+		// A non-positive block duration disables blocking: codes are then re-sent without limit.
+		if (resends > resendLimit && resendBlockDuration > 0) {
+			blockedUntil = block(user, now);
+			authSession.setAuthNote(RESENDS_NOTE, "0");
+			return Outcome.blocked(blockedUntil);
+		}
+		authSession.setAuthNote(RESENDS_NOTE, Integer.toString(resends));
+
 		boolean reusable = code != null
 			&& expiresAt - now >= MIN_REMAINING_SECONDS * 1000L
 			&& recipient.equals(authSession.getAuthNote(RECIPIENT_NOTE));
 		if (reusable) {
-			int resends = parseIntOrZero(authSession.getAuthNote(RESENDS_NOTE)) + 1;
-			// A non-positive block duration disables blocking: the code is then re-sent without limit.
-			if (resends > resendLimit && resendBlockDuration > 0) {
-				blockedUntil = block(user, now);
-				authSession.setAuthNote(RESENDS_NOTE, "0");
-				return Outcome.blocked(blockedUntil);
-			}
-			authSession.setAuthNote(RESENDS_NOTE, Integer.toString(resends));
 			logger.debugf("Re-sending SMS code of user %s (re-send %d of %d)", user.getUsername(), resends, resendLimit);
 		} else {
 			code = SecretGenerator.getInstance().randomString(length, SecretGenerator.DIGITS);
@@ -146,9 +150,9 @@ final class SmsCode {
 			authSession.setAuthNote(CODE_NOTE, code);
 			authSession.setAuthNote(EXPIRY_NOTE, Long.toString(expiresAt));
 			authSession.setAuthNote(RECIPIENT_NOTE, recipient);
-			authSession.setAuthNote(RESENDS_NOTE, "0");
-			logger.debugf("Issuing new SMS code of user %s (%s)", user.getUsername(),
-				resent ? "previous code expired, about to expire or sent elsewhere" : "first code in this session");
+			logger.debugf("Issuing new SMS code of user %s (%s, re-send %d of %d)", user.getUsername(),
+				resent ? "previous code expired, about to expire or sent elsewhere" : "first code in this login attempt",
+				resends, resendLimit);
 		}
 		authSession.setAuthNote(SENT_AT_NOTE, Long.toString(now));
 		return Outcome.issued(code, expiresAt, now + (resendCooldown * 1000L), resent);
