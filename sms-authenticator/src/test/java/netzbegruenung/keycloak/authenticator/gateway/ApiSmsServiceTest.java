@@ -30,7 +30,7 @@ class ApiSmsServiceTest {
 	private HttpServer server;
 	private final LinkedBlockingQueue<CapturedRequest> requests = new LinkedBlockingQueue<>();
 
-	private record CapturedRequest(String contentType, String authorization, String body) {
+	private record CapturedRequest(String contentType, String authorization, String body, String uri) {
 	}
 
 	@BeforeEach
@@ -44,7 +44,8 @@ class ApiSmsServiceTest {
 			requests.add(new CapturedRequest(
 				exchange.getRequestHeaders().getFirst("Content-Type"),
 				exchange.getRequestHeaders().getFirst("Authorization"),
-				body
+				body,
+				exchange.getRequestURI().toString()
 			));
 			exchange.sendResponseHeaders(200, -1);
 			exchange.close();
@@ -174,5 +175,146 @@ class ApiSmsServiceTest {
 		service.send("0176123456", "code");
 
 		assertEquals("+49176123456", parseFormData(awaitRequest().body()).get("to"));
+	}
+
+	@Test
+	@DisplayName("default JSON body picks the override for a US number and the global sender for a German one")
+	void defaultJsonBodyUsesOverrideForUsAndGlobalForGerman() throws Exception {
+		ApiSmsService service = newService(Map.of(
+			"urlencode", "false",
+			"senderIdOverrides", "US=US-SENDER"
+		));
+
+		service.send("+12025550123", "code");
+		assertTrue(awaitRequest().body().contains("\"sender\":\"US-SENDER\""));
+
+		service.send("+491234567", "code");
+		assertTrue(awaitRequest().body().contains("\"sender\":\"test-sender\""));
+	}
+
+	@Test
+	@DisplayName("urlencoded mode picks the override for a US number and the global sender for a German one")
+	void urlencodedModeUsesOverrideForUsAndGlobalForGerman() throws Exception {
+		ApiSmsService service = newService(Map.of(
+			"urlencode", "true",
+			"senderIdOverrides", "US=US-SENDER"
+		));
+
+		service.send("+12025550123", "code");
+		assertEquals("US-SENDER", parseFormData(awaitRequest().body()).get("sender"));
+
+		service.send("+491234567", "code");
+		assertEquals("test-sender", parseFormData(awaitRequest().body()).get("sender"));
+	}
+
+	@Test
+	@DisplayName("jsonTemplate containing {senderId} gets the override while %s still maps phone then message")
+	void jsonTemplateWithSenderIdPlaceholderGetsOverride() throws Exception {
+		ApiSmsService service = newService(Map.of(
+			"urlencode", "false",
+			"senderIdOverrides", "US=US-SENDER",
+			"jsonTemplate", "{\"to\":\"%s\",\"body\":\"%s\",\"sender\":\"{senderId}\"}"
+		));
+
+		service.send("+12025550123", "your code is 123456");
+
+		String body = awaitRequest().body();
+		assertEquals("{\"to\":\"+12025550123\",\"body\":\"your code is 123456\",\"sender\":\"US-SENDER\"}", body);
+	}
+
+	@Test
+	@DisplayName("an unset senderId with a {senderId} template sends an empty sender instead of failing")
+	void unsetSenderIdWithPlaceholderSendsEmptySender() throws Exception {
+		Map<String, String> config = new HashMap<>();
+		config.put("apiurl", apiUrl());
+		config.put("countrycode", "");
+		config.put("jsonTemplate", "{\"to\":\"%s\",\"body\":\"%s\",\"sender\":\"{senderId}\"}");
+		ApiSmsService service = new ApiSmsService(config);
+
+		service.send("+491234567", "code");
+
+		assertEquals("{\"to\":\"+491234567\",\"body\":\"code\",\"sender\":\"\"}", awaitRequest().body());
+	}
+
+	@Test
+	@DisplayName("a sender containing a quote is escaped, keeping the JSON body valid")
+	void senderWithQuoteIsEscaped() throws Exception {
+		ApiSmsService service = newService(Map.of(
+			"urlencode", "false",
+			"senderIdOverrides", "US=say \"hi\""
+		));
+
+		service.send("+12025550123", "code");
+
+		assertTrue(awaitRequest().body().contains("\"sender\":\"say \\\"hi\\\"\""));
+	}
+
+	@Test
+	@DisplayName("jsonTemplate without {senderId} is byte-identical whether or not overrides are configured")
+	void jsonTemplateWithoutSenderIdPlaceholderIsUnaffectedByOverrides() throws Exception {
+		String template = "{\"to\":\"%s\",\"body\":\"%s\"}";
+
+		ApiSmsService withoutOverrides = newService(Map.of("urlencode", "false", "jsonTemplate", template));
+		withoutOverrides.send("+12025550123", "your code is 123456");
+		String bodyWithoutOverrides = awaitRequest().body();
+
+		ApiSmsService withOverrides = newService(Map.of(
+			"urlencode", "false",
+			"jsonTemplate", template,
+			"senderIdOverrides", "US=US-SENDER"
+		));
+		withOverrides.send("+12025550123", "your code is 123456");
+		String bodyWithOverrides = awaitRequest().body();
+
+		assertEquals(bodyWithoutOverrides, bodyWithOverrides);
+	}
+
+	@Test
+	@DisplayName("jsonTemplate + useUuid=true + {senderId} keeps the uuid/phone/message order")
+	void jsonTemplateWithUuidAndSenderIdKeepsFieldOrder() throws Exception {
+		ApiSmsService service = newService(Map.of(
+			"urlencode", "false",
+			"useUuid", "true",
+			"senderIdOverrides", "US=US-SENDER",
+			"jsonTemplate", "{\"uuid\":\"%s\",\"to\":\"%s\",\"body\":\"%s\",\"sender\":\"{senderId}\"}"
+		));
+
+		service.send("+12025550123", "your code is 123456");
+
+		String body = awaitRequest().body();
+		assertTrue(body.matches(
+			"\\{\"uuid\":\"[0-9a-f-]{36}\",\"to\":\"\\+12025550123\",\"body\":\"your code is 123456\",\"sender\":\"US-SENDER\"}"
+		));
+	}
+
+	@Test
+	@DisplayName("stripPlusPrefix=true with a US number still applies the override")
+	void stripPlusPrefixStillAppliesOverride() throws Exception {
+		ApiSmsService service = newService(Map.of(
+			"urlencode", "false",
+			"stripPlusPrefix", "true",
+			"senderIdOverrides", "US=US-SENDER"
+		));
+
+		service.send("+12025550123", "code");
+
+		String body = awaitRequest().body();
+		assertTrue(body.contains("\"to\":\"12025550123\""));
+		assertTrue(body.contains("\"sender\":\"US-SENDER\""));
+	}
+
+	@Test
+	@DisplayName("getUrl GET mode substitutes the resolved sender for {senderId}")
+	void getUrlModeSubstitutesResolvedSender() throws Exception {
+		ApiSmsService service = newService(Map.of(
+			"senderIdOverrides", "US=US-SENDER",
+			"getUrl", "?phone={phone}&message={message}&sender={senderId}"
+		));
+
+		service.send("+12025550123", "code");
+
+		String uri = awaitRequest().uri();
+		assertTrue(uri.contains("sender=US-SENDER"), "Expected the resolved sender in the GET URI, got: " + uri);
+		assertTrue(uri.contains("phone=%2B12025550123"), "Expected the phone number in the GET URI, got: " + uri);
 	}
 }

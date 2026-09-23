@@ -35,9 +35,10 @@ from the original authenticator provider [documentation](https://www.keycloak.or
    1. `Receiver Phone Number Attribute`: The attribute that contains the receiver phone number. For many APIs (i.e. GTX Messaging, SMS Eagle) this is `to`.
    1. `Sender Phone Number Attribute`: The attribute that contains the sender phone number. Leave empty if not required.
    1. `SenderId`: The sender ID is displayed as the message sender on the receiving device. This is the value for the `Sender Phone Number Attribute`.
+   1. `SenderId per country`: Overrides `SenderId` for the destination countries listed, one rule per entry, written as `<countries>=<sender>`. Countries are ISO 3166-1 alpha-2 codes (`US`, `CA`, `ES`), several per rule separated by commas; a dialling prefix (`+1`) can be used instead. `US,CA=18885551234` sends US and Canadian messages from a toll-free number, which those networks require, while every other country keeps `SenderId`. The sender is used exactly as written, so match the format your provider expects. Country rules are checked before prefix rules, and among prefix rules the longest one wins; an unparsable rule is ignored with a warning. Phone numbers are matched most reliably when they are stored in E.164 form (`Format phone number` on), since a number without a country code is read as belonging to `Default country prefix`. In a realm export or with `kcadm`, the entries are one string joined by `##`.
    1. `Use message UUID`: If your API requires UUID for a message, you can generate it with this property.
    2. `UUID attribute`: The attribute that contains the generated UUID. Only aplicable when `Use message UUID` is set.
-   3. `Request JSON template`: If default JSON template is not enough for your needs, put your custom template here. UUID (if 'Use message UUID' is set), phone number and message (in that order) use placeholders `%s`.
+   3. `Request JSON template`: If default JSON template is not enough for your needs, put your custom template here. UUID (if 'Use message UUID' is set), phone number and message (in that order) use placeholders `%s`. The sender is not one of them: write `{senderId}` where the sender belongs, otherwise `SenderId per country` has no effect on this template.
 
 # Usage
 After successfully configured the authenticator and the required actions users can set up SMS Authentication in the
