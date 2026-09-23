@@ -1,0 +1,81 @@
+# Rolling pre-releases with the provider jars, so testers can download builds
+# without waiting for a tagged release:
+#   - pull requests from branches of this repository: release "pr-<number>",
+#     replaced on every push, linked from a PR comment, deleted when the PR closes
+#   - pushes to main: release "main-snapshot", replaced on every push
+# Tagged releases (v*) are handled by release.yml and are not touched.
+name: Snapshot release
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+    if: github.event.action != 'closed'
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    if: github.event.action != 'closed'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: staging
+      - name: Recreate the rolling pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            TAG="pr-${PR_NUMBER}"
+            TITLE="PR #${PR_NUMBER} build (${SHA:0:7})"
+            NOTES="Development build of pull request #${PR_NUMBER} at ${SHA}. Replaced on every push to the PR."
+          else
+            TAG="main-snapshot"
+            TITLE="main snapshot (${SHA:0:7})"
+            NOTES="Development build of main at ${SHA}. Replaced on every push to main."
+          fi
+          # build.yml also stages the unshaded original-*.jar files; only the provider jars are useful.
+          rm -f staging/original-*
+          gh release delete "$TAG" --cleanup-tag --yes || true
+          gh release create "$TAG" staging/* --prerelease --target "$SHA" --title "$TITLE" --notes "$NOTES"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+      - name: Link the build from the pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          URL=$(gh release view "$TAG" --json url -q .url)
+          MARKER="<!-- snapshot-jars -->"
+          BODY="${MARKER}Jars built from ${SHA:0:7}: ${URL}"
+          COMMENT_ID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            -q ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -n 1)
+          if [ -n "$COMMENT_ID" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" -f body="$BODY" > /dev/null
+          else
+            gh pr comment "$PR_NUMBER" --body "$BODY"
+          fi
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Delete the pull request's pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete "pr-${{ github.event.pull_request.number }}" --cleanup-tag --yes || true
