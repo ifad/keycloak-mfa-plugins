@@ -30,7 +30,6 @@ import java.net.http.HttpResponse;
 import org.jboss.logging.Logger;
 import java.util.Base64;
 import java.net.URLEncoder;
-import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,6 +39,7 @@ public class ApiSmsService implements SmsService{
 
 	private static final Logger logger = Logger.getLogger(SmsServiceFactory.class);
 	private static final Pattern plusPrefixPattern = Pattern.compile("\\+");
+	static final String SENDER_ID_PLACEHOLDER = "{senderId}";
 
 	private final String apiurl;
 	private final Boolean urlencode;
@@ -48,7 +48,7 @@ public class ApiSmsService implements SmsService{
 	private final String apitoken;
 	private final String apiuser;
 
-	private final String senderId;
+	private final SenderIdResolver senderIdResolver;
 	private final String countrycode;
 
 	private final String apitokenattribute;
@@ -76,7 +76,6 @@ public class ApiSmsService implements SmsService{
 		apiuser = config.getOrDefault("apiuser", "");
 
 		countrycode = config.getOrDefault("countrycode", "");
-		senderId = config.get("senderId");
 
 		apitokenattribute = config.getOrDefault("apitokenattribute", "");
 		messageattribute = config.get("messageattribute");
@@ -93,10 +92,18 @@ public class ApiSmsService implements SmsService{
 		getUrl = config.getOrDefault("getUrl", "");
 
 		stripPlusPrefix = Boolean.parseBoolean(config.getOrDefault("stripPlusPrefix", "false"));
+
+		senderIdResolver = new SenderIdResolver(config);
+		if (senderIdResolver.hasOverrides() && !jsonTemplate.isBlank() && !jsonTemplate.contains(SENDER_ID_PLACEHOLDER)) {
+			SenderIdResolver.warnOnce("Sender ID overrides are configured but the request JSON template has no "
+				+ SENDER_ID_PLACEHOLDER + " placeholder, so every SMS keeps the sender of the template");
+		}
 	}
 
 	public void send(String phoneNumber, String message) {
 		phoneNumber = cleanPhoneNumber(phoneNumber, countrycode);
+		// Resolve before the prefix is stripped: the resolver needs the country of the number.
+		String sender = senderIdResolver.resolve(phoneNumber);
 		if (stripPlusPrefix && phoneNumber.startsWith("+")) {
 			phoneNumber = phoneNumber.substring(1);
 		}
@@ -106,12 +113,12 @@ public class ApiSmsService implements SmsService{
 		var client = HttpClient.newHttpClient();
 		try {
 			if (getUrl != null && !getUrl.isBlank()) {
-				requestBuilder = getRequest(phoneNumber, message);
+				requestBuilder = getRequest(phoneNumber, message, sender);
 			} else {
 				if (urlencode) {
-					requestBuilder = urlencodedRequest(phoneNumber, message);
+					requestBuilder = urlencodedRequest(phoneNumber, message, sender);
 				} else {
-					requestPayload = getJsonBody(phoneNumber, message);
+					requestPayload = getJsonBody(phoneNumber, message, sender);
 					requestBuilder = jsonRequest(requestPayload);
 				}
 			}
@@ -152,11 +159,13 @@ public class ApiSmsService implements SmsService{
 			phoneNumber, request != null ? request.toString() : "null");
 	}
 
-	private String getJsonBody(String phoneNumber, String message) {
+	private String getJsonBody(String phoneNumber, String message, String senderId) {
 		if (!jsonTemplate.isBlank()) {
-			return useUuid ?
+			String body = useUuid ?
 				String.format(jsonTemplate, UUID.randomUUID(), phoneNumber, message) :
 				String.format(jsonTemplate, phoneNumber, message);
+			// Substituted after String.format so a sender containing % cannot break the format call.
+			return body.replace(SENDER_ID_PLACEHOLDER, jsonEscape(senderId));
 		}
 
 		StringBuilder json = new StringBuilder("{");
@@ -177,7 +186,7 @@ public class ApiSmsService implements SmsService{
 		json.append(String.format("\"%s\":\"%s\"", messageattribute, message));
 
 		json.append(",").append(String.format("\"%s\":%s", receiverattribute, String.format(receiverJsonTemplate, phoneNumber)));
-		json.append(",").append(String.format("\"%s\":\"%s\"", senderattribute, senderId));
+		json.append(",").append(String.format("\"%s\":\"%s\"", senderattribute, jsonEscape(senderId)));
 		json.append("}");
 
 		return json.toString();
@@ -191,13 +200,13 @@ public class ApiSmsService implements SmsService{
 	}
 
 
-	public Builder urlencodedRequest(String phoneNumber, String message) {
+	public Builder urlencodedRequest(String phoneNumber, String message, String senderId) {
 		String body = (apiTokenInHeader ? "" : Optional.ofNullable(apitokenattribute)
-						  .map(it -> String.format("%s=%s&", it, URLEncoder.encode(apitoken, Charset.defaultCharset()))).orElse(""))
-					  + (useUuid ? String.format("%s=%s&", uuidAttribute, URLEncoder.encode(UUID.randomUUID().toString(), Charset.defaultCharset())) : "")
-					  + String.format("%s=%s&", messageattribute, URLEncoder.encode(message, Charset.defaultCharset()))
-					  + String.format("%s=%s&", receiverattribute, URLEncoder.encode(phoneNumber, Charset.defaultCharset()))
-					  + String.format("%s=%s", senderattribute, URLEncoder.encode(senderId, Charset.defaultCharset()));
+						  .map(it -> String.format("%s=%s&", it, URLEncoder.encode(apitoken, StandardCharsets.UTF_8))).orElse(""))
+					  + (useUuid ? String.format("%s=%s&", uuidAttribute, URLEncoder.encode(UUID.randomUUID().toString(), StandardCharsets.UTF_8)) : "")
+					  + String.format("%s=%s&", messageattribute, URLEncoder.encode(message, StandardCharsets.UTF_8))
+					  + String.format("%s=%s&", receiverattribute, URLEncoder.encode(phoneNumber, StandardCharsets.UTF_8))
+					  + String.format("%s=%s", senderattribute, URLEncoder.encode(senderId != null ? senderId : "", StandardCharsets.UTF_8));
 
 		return HttpRequest.newBuilder()
 				.uri(URI.create(apiurl))
@@ -205,14 +214,22 @@ public class ApiSmsService implements SmsService{
 				.POST(HttpRequest.BodyPublishers.ofString(body));
 	}
 
-	public Builder getRequest(String phoneNumber, String message) {
+	public Builder getRequest(String phoneNumber, String message, String senderId) {
 		String getNewUrl = getUrl.replace("{phone}", URLEncoder.encode(phoneNumber, StandardCharsets.UTF_8));
 		getNewUrl = getNewUrl.replace("{message}", URLEncoder.encode(message, StandardCharsets.UTF_8));
 		getNewUrl = getNewUrl.replace("{apitoken}", URLEncoder.encode(apitoken, StandardCharsets.UTF_8));
-		getNewUrl = getNewUrl.replace("{senderId}", URLEncoder.encode(senderId != null ? senderId : "", StandardCharsets.UTF_8));
+		getNewUrl = getNewUrl.replace(SENDER_ID_PLACEHOLDER, URLEncoder.encode(senderId != null ? senderId : "", StandardCharsets.UTF_8));
 		return HttpRequest.newBuilder()
 				.uri(URI.create(apiurl.concat(getNewUrl)))
 				.GET();
+	}
+
+	private static String jsonEscape(String value) {
+		if (value == null) {
+			return "";
+		}
+		return value.replace("\\", "\\\\").replace("\"", "\\\"")
+			.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
 	}
 
 	private static String getAuthHeader(String apiuser, String apitoken) {
