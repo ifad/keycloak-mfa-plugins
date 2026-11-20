@@ -1,0 +1,98 @@
+# Daily: merges the latest upstream release into main and tags main with the
+# upstream tag name, which triggers release.yml.
+# A merge that conflicts or fails the build becomes a pull request instead;
+# once it is merged (as a merge commit, not squashed), the next run tags main.
+#
+# Needs the UPSTREAM_SYNC_TOKEN secret: a token with contents, pull-requests
+# and workflows write access. GITHUB_TOKEN cannot push upstream changes to
+# .github/workflows, and its pushes would not trigger release.yml.
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+concurrency: upstream-sync
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: netzbegruenung/keycloak-mfa-plugins
+
+jobs:
+  sync:
+    if: github.repository == 'ifad/keycloak-mfa-plugins'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the sync token
+        env:
+          TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Secret UPSTREAM_SYNC_TOKEN is not set"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+
+      - uses: actions/setup-java@v6
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Merge and tag the latest upstream release
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TAG=$(gh release view --repo "$UPSTREAM" --json tagName --jq .tagName)
+          if [[ ! "$TAG" =~ ^v[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Unexpected upstream tag name: $TAG"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "$TAG is already released here"
+            exit 0
+          fi
+
+          # Upstream tags share names with ours, so keep them out of refs/tags.
+          git fetch --no-tags "https://github.com/$UPSTREAM.git" "+refs/tags/$TAG:refs/upstream/$TAG"
+          UPSTREAM_SHA=$(git rev-parse "refs/upstream/$TAG^{commit}")
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
+            BRANCH="sync/upstream-$TAG"
+            if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+              echo "::warning::$TAG waits for its sync pull request to be merged"
+              exit 0
+            fi
+
+            if git merge --no-ff -m "chore: sync upstream $TAG" "$UPSTREAM_SHA" && mvn -B install; then
+              git push origin HEAD:main
+            else
+              git merge --abort 2> /dev/null || git reset --hard origin/main
+              git push --force origin "$UPSTREAM_SHA:refs/heads/$BRANCH"
+              gh pr create --base main --head "$BRANCH" \
+                --title "chore: sync upstream $TAG" \
+                --body "Upstream release [$TAG](https://github.com/$UPSTREAM/releases/tag/$TAG) does not merge cleanly into main, or the merged build fails.
+
+          Resolve it on this branch: \`git switch $BRANCH && git merge origin/main\`, fix, push.
+          Merge with a **merge commit** (not squash or rebase); the next sync run then tags main as $TAG and releases it."
+              echo "::warning::$TAG needs a manual merge, opened a pull request from $BRANCH"
+              exit 0
+            fi
+          fi
+
+          git tag "$TAG" HEAD
+          git push origin "refs/tags/$TAG"
+          echo "Tagged main as $TAG"
